@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 //
-//  Copyright (C) 2006-2020 Fons Adriaensen <fons@linuxaudio.org>
+//  Copyright (C) 2006-2023 Fons Adriaensen <fons@linuxaudio.org>
 //    
 //  This program is free software; you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -27,7 +27,11 @@
 #if defined(ENABLE_SSE2)
 #  define ENABLE_VEC4
 #  include <pmmintrin.h>
+#elif defined(ENABLE_NEON)
+#  define ENABLE_VEC4
+#  include <arm_neon.h>
 #endif
+
 
 #include "zita-resampler/vresampler.h"
 
@@ -53,7 +57,6 @@ int VResampler::setup (double       ratio,
                        unsigned int nchan,
                        unsigned int hlen)
 {
-    if ((hlen < 8) || (hlen > 96) || (16 * ratio < 1) || (ratio > 256)) return 1;
     return setup (ratio, nchan, hlen, 1.0 - 2.6 / hlen);
 }
 
@@ -67,9 +70,9 @@ int VResampler::setup (double       ratio,
     double             dp;
     Resampler_table    *T = 0;
 
-    if (!nchan || (64 * ratio < 1.0) || (ratio > 64))
+    if (!nchan || (hlen < 8) || (hlen > 96) || (64 * ratio < 1) || (ratio > 256))
     {
-	clear ();
+        clear ();
         return 1; 
     }
 
@@ -83,30 +86,30 @@ int VResampler::setup (double       ratio,
         mi = (unsigned int)(ceil (mi / ratio));
     }
 #ifdef ENABLE_VEC4
-	    hl = (hl + 3) & ~3;
+            hl = (hl + 3) & ~3;
 #endif
     T = Resampler_table::create (frel, hl, NPHASE);
     clear ();
     if (T)
     {
-	_table = T;
+        _table = T;
         n = nchan * (2 * hl + mi);
 #ifdef ENABLE_VEC4
-	posix_memalign ((void **)(&_buff), 16, n * sizeof (float));
-	posix_memalign ((void **)(&_c1), 16, hl * sizeof (float));
-	posix_memalign ((void **)(&_c2), 16, hl * sizeof (float));
-#else	
-	_buff  = new float [n];
-	_c1 = new float [hl];
-	_c2 = new float [hl];
-#endif	
-	_nchan = nchan;
- 	_ratio = ratio;
-	_inmax = mi;
-	_pstep = dp;
-	_qstep = dp;
-	_wstep = 1;
-	return reset ();
+        posix_memalign ((void **)(&_buff), 16, n * sizeof (float));
+        posix_memalign ((void **)(&_c1), 16, hl * sizeof (float));
+        posix_memalign ((void **)(&_c2), 16, hl * sizeof (float));
+#else   
+        _buff  = new float [n];
+        _c1 = new float [hl];
+        _c2 = new float [hl];
+#endif  
+        _nchan = nchan;
+        _ratio = ratio;
+        _inmax = mi;
+        _pstep = dp;
+        _qstep = dp;
+        _wstep = 1;
+        return reset ();
     }
     else return 1;
 }
@@ -187,10 +190,10 @@ int VResampler::reset (void)
     _nzero = 0;
     _phase = 0; 
     if (_table)
-    {	
+    {   
         _nread = 2 * _table->_hl;
-	return 0;
-    }	
+        return 0;
+    }   
     return 1;
 }
 
@@ -237,31 +240,31 @@ int VResampler::process (void)
         }
         if (nr) break;
 
-	if (out_data)
-	{
-	    if (nz < 2 * hl)
-	    {
-		n = (unsigned int) ph;
-		b = (float)(ph - n);
-		a = 1.0f - b;
-		q1 = _table->_ctab + hl * n;
-		q2 = _table->_ctab + hl * (np - n);
+        if (out_data)
+        {
+            if (nz < 2 * hl)
+            {
+                n = (unsigned int) ph;
+                b = (float)(ph - n);
+                a = 1.0f - b;
+                q1 = _table->_ctab + hl * n;
+                q2 = _table->_ctab + hl * (np - n);
 
 #if defined(ENABLE_SSE2)
                 __m128 C1, C2, Q1, Q2, S;
-   	        C1 = _mm_load1_ps (&a);
-		C2 = _mm_load1_ps (&b);
-		for (i = 0; i < hl; i += 4)
-		{
- 		    Q1 = _mm_load_ps (q1 + i);
-		    Q2 = _mm_load_ps (q1 + i + hl);
-		    S = _mm_add_ps (_mm_mul_ps (Q1, C1), _mm_mul_ps (Q2, C2));
-		    _mm_store_ps (_c1 + i, S);
-		    Q1 = _mm_load_ps (q2 + i);
-		    Q2 = _mm_load_ps (q2 + i - hl);
-		    S = _mm_add_ps (_mm_mul_ps (Q1, C1), _mm_mul_ps (Q2, C2));
-		    _mm_store_ps (_c2 + i, S);
-		}
+                C1 = _mm_load1_ps (&a);
+                C2 = _mm_load1_ps (&b);
+                for (i = 0; i < hl; i += 4)
+                {
+                    Q1 = _mm_load_ps (q1 + i);
+                    Q2 = _mm_load_ps (q1 + i + hl);
+                    S = _mm_add_ps (_mm_mul_ps (Q1, C1), _mm_mul_ps (Q2, C2));
+                    _mm_store_ps (_c1 + i, S);
+                    Q1 = _mm_load_ps (q2 + i);
+                    Q2 = _mm_load_ps (q2 + i - hl);
+                    S = _mm_add_ps (_mm_mul_ps (Q1, C1), _mm_mul_ps (Q2, C2));
+                    _mm_store_ps (_c2 + i, S);
+                }
                 for (j = 0; j < _nchan; j++)
                 {
                     q1 = p1 + j * di;
@@ -278,57 +281,89 @@ int VResampler::process (void)
                         q1 += 4;
                         S = _mm_add_ps (S, _mm_mul_ps (C2, Q2));
                     }
-		    *out_data++ = S [0] + S [1] + S [2] + S [3];
+                    *out_data++ = S [0] + S [1] + S [2] + S [3];
+                }
+                
+#elif defined(ENABLE_NEON)
+// ARM64 version by Nicolas Belin <nbelin@baylibre.com>
+                float32x4_t *C1 = (float32x4_t *)_c1;
+                float32x4_t *C2 = (float32x4_t *)_c2;
+                float32x4_t S, T;
+                for (i = 0; i < (hl>>2); i++)
+                {
+                    T = vmulq_n_f32 (vld1q_f32 (q1 + hl), b);
+                    C1 [i] = vmlaq_n_f32 (T, vld1q_f32 (q1), a);
+                    T = vmulq_n_f32 (vld1q_f32 (q2 - hl), b);
+                    C2 [i] = vmlaq_n_f32 (T, vld1q_f32 (q2), a);
+                    q2 += 4;
+                    q1 += 4;
+                }
+                for (j = 0; j < _nchan; j++)
+                {
+                    q1 = p1 + j * di;
+                    q2 = p2 + j * di - 4;
+                    T = vrev64q_f32 (vld1q_f32 (q2));
+                    S = vmulq_f32 (vextq_f32 (T, T, 2), C2 [0]);
+                    S = vmlaq_f32 (S, vld1q_f32 (q1), C1 [0]);
+                    for (i = 1; i < (hl>>2); i++)
+                    {
+                        q2 -= 4;
+                        q1 += 4;
+                        T = vrev64q_f32 (vld1q_f32 (q2));
+                        S = vmlaq_f32 (S, vextq_f32 (T, T, 2), C2 [i]);
+                        S = vmlaq_f32 (S, vld1q_f32 (q1), C1 [i]);
+                    }
+                    *out_data++ = vaddvq_f32 (S);
                 }
 
 #else
-		float s;
-		for (i = 0; i < hl; i++)
-		{
-		    _c1 [i] = a * q1 [i] + b * q1 [i + hl];
-		    _c2 [i] = a * q2 [i] + b * q2 [i - hl];
-		}
-		for (j = 0; j < _nchan; j++)
-		{
-		    q1 = p1 + j * di;
-		    q2 = p2 + j * di;
-		    s = 1e-20f;
-		    for (i = 0; i < hl; i++)
-		    {
-			q2--;
-			s += *q1 * _c1 [i] + *q2 * _c2 [i];
-			q1++;
-		    }
-		    *out_data++ = s - 1e-20f;
-		}
-#endif		
-	    }
-	    else
-	    {
-		for (j = 0; j < _nchan; j++) *out_data++ = 0;
-	    }
-	}
-	out_count--;
+                float s;
+                for (i = 0; i < hl; i++)
+                {
+                    _c1 [i] = a * q1 [i] + b * q1 [i + hl];
+                    _c2 [i] = a * q2 [i] + b * q2 [i - hl];
+                }
+                for (j = 0; j < _nchan; j++)
+                {
+                    q1 = p1 + j * di;
+                    q2 = p2 + j * di;
+                    s = 1e-30f;
+                    for (i = 0; i < hl; i++)
+                    {
+                        q2--;
+                        s += *q1 * _c1 [i] + *q2 * _c2 [i];
+                        q1++;
+                    }
+                    *out_data++ = s - 1e-30f;
+                }
+#endif          
+            }
+            else
+            {
+                for (j = 0; j < _nchan; j++) *out_data++ = 0;
+            }
+        }
+        out_count--;
 
-	dd =  _qstep - dp;
-	if (fabs (dd) < 1e-20) dp = _qstep;
-	else dp += _wstep * dd;
-	ph += dp;
+        dd =  _qstep - dp;
+        if (fabs (dd) < 1e-20) dp = _qstep;
+        else dp += _wstep * dd;
+        ph += dp;
         if (ph >= np)
         {
-  	    nr = (unsigned int) floor (ph / np);
-	    ph -= nr * np;;
-	    in += nr;
-	    p1 += nr;
+            nr = (unsigned int) floor (ph / np);
+            ph -= nr * np;;
+            in += nr;
+            p1 += nr;
 
             if (in >= _inmax)
             {
-		n = 2 * hl - nr;
-		p2 = _buff;
-		for (j = 0; j < _nchan; j++)
-		{
+                n = 2 * hl - nr;
+                p2 = _buff;
+                for (j = 0; j < _nchan; j++)
+                {
                     memmove (p2 + j * di, p1 + j * di, n * sizeof (float));
-		}
+                }
                 in = 0;
                 p1 = _buff;
                 p2 = p1 + n;

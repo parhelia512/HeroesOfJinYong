@@ -22,6 +22,7 @@
 #include <mutex>
 #include <vector>
 #include <memory>
+#include <string>
 #include <cstdint>
 
 namespace hojy::audio {

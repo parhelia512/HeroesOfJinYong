@@ -34,6 +34,7 @@
 #include "util/random.hh"
 #include <fmt/xchar.h>
 #include <map>
+#include <algorithm>
 
 namespace hojy::scene {
 

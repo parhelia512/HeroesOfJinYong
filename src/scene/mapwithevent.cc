@@ -30,6 +30,7 @@
 #include "util/random.hh"
 #include "util/math.hh"
 #include <fmt/xchar.h>
+#include <algorithm>
 
 namespace hojy::scene {
 

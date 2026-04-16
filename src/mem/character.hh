@@ -22,6 +22,8 @@
 #include "serializable.hh"
 #include "data/consts.hh"
 
+#include <cstdint>
+
 namespace hojy::mem {
 
 struct CharacterData {

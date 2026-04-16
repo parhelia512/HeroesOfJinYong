@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 //
-//  Copyright (C) 2006-2020 Fons Adriaensen <fons@linuxaudio.org>
+//  Copyright (C) 2006-2023 Fons Adriaensen <fons@linuxaudio.org>
 //    
 //  This program is free software; you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -27,6 +27,9 @@
 #if defined(ENABLE_SSE2)
 #  define ENABLE_VEC4
 #  include <pmmintrin.h>
+#elif defined(ENABLE_NEON)
+#  define ENABLE_VEC4
+#  include <arm_neon.h>
 #endif
 
 #include "zita-resampler/resampler.h"
@@ -75,7 +78,6 @@ int Resampler::setup (unsigned int fs_inp,
                       unsigned int nchan,
                       unsigned int hlen)
 {
-    if ((hlen < 8) || (hlen > 96)) return 1;
     return setup (fs_inp, fs_out, nchan, hlen, 1.0 - 2.6 / hlen);
 }
 
@@ -90,20 +92,20 @@ int Resampler::setup (unsigned int fs_inp,
     double             r;
     Resampler_table    *T = 0;
 
-    if (!fs_inp || !fs_out || !nchan)
+    if (!nchan || (hlen < 8) || (hlen > 96))
     {
-	clear ();
-	return 1;
+        clear ();
+        return 1; 
     }
-    
+
     r = (double) fs_out / (double) fs_inp;
     n = gcd (fs_out, fs_inp);
     np = fs_out / n;
     dp = fs_inp / n;
     if ((64 * r < 1.0) || (np > 1000))
     {
-	clear ();
-	return 1;
+        clear ();
+        return 1;
     }
 
     hl = hlen;
@@ -125,7 +127,7 @@ int Resampler::setup (unsigned int fs_inp,
         _table = T;
          n = nchan * (2 * hl + mi);
 #ifdef ENABLE_VEC4
-	posix_memalign ((void **)(&_buff), 16, n * sizeof (float));
+        posix_memalign ((void **)(&_buff), 16, n * sizeof (float));
         memset (_buff, 0, n * sizeof (float));
 #else       
         _buff = new float [n];
@@ -255,22 +257,46 @@ int Resampler::process (void)
                         q1 += 4;
                         S = _mm_add_ps (S, _mm_mul_ps (C2, Q2));
                     }
-		    *out_data++ = S [0] + S [1] + S [2] + S [3];
+                    *out_data++ = S [0] + S [1] + S [2] + S [3];
                 }
+                
+#elif defined(ENABLE_NEON)
+// ARM64 version by Nicolas Belin <nbelin@baylibre.com>
+                float32x4_t *C1 = (float32x4_t *)c1;
+                float32x4_t *C2 = (float32x4_t *)c2;
+                float32x4_t S, T;
+                for (j = 0; j < _nchan; j++)
+                {
+                    q1 = p1 + j * di;
+                    q2 = p2 + j * di - 4;
+                    T = vrev64q_f32 (vld1q_f32 (q2));
+                    S = vmulq_f32 (vextq_f32 (T, T, 2), C2 [0]);
+                    S = vmlaq_f32 (S, vld1q_f32(q1), C1 [0]);
+                    for (i = 1; i < (hl>>2); i++)
+                    {
+                        q2 -= 4;
+                        q1 += 4;
+                        T = vrev64q_f32 (vld1q_f32 (q2));
+                        S = vmlaq_f32 (S, vextq_f32 (T, T, 2), C2 [i]);
+                        S = vmlaq_f32 (S, vld1q_f32 (q1), C1 [i]);
+                    }
+                    *out_data++ = vaddvq_f32(S);
+                }
+
 #else
-		float s;
+                float s;
                 for (j = 0; j < _nchan; j++)
                 {
                     q1 = p1 + j * di;
                     q2 = p2 + j * di;
-                    s = 1e-20f;
+                    s = 1e-30f;
                     for (i = 0; i < hl; i++)
                     {
                         q2--;
                         s += *q1 * c1 [i] + *q2 * c2 [i];
                         q1++;
                     }
-                    *out_data++ = s - 1e-20f;
+                    *out_data++ = s - 1e-30f;
                 }
 #endif
             }
@@ -290,12 +316,12 @@ int Resampler::process (void)
             p1 += nr;
             if (in >= _inmax)
             {
-		n = 2 * hl - nr;
-		p2 = _buff;
-		for (j = 0; j < _nchan; j++)
-		{
+                n = 2 * hl - nr;
+                p2 = _buff;
+                for (j = 0; j < _nchan; j++)
+                {
                     memmove (p2 + j * di, p1 + j * di, n * sizeof (float));
-		}
+                }
                 in = 0;
                 p1 = _buff;
                 p2 = p1 + n;

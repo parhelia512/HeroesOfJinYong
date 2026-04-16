@@ -3,6 +3,26 @@ audio signals. Full documentation is available in HTML format,
 see the 'docs' directory.
 
 
+Release 1.11.2  (30/08/2023)
+---------------------------
+
+* Added optimised code for ARM64, contributed by Nicolas Belin.
+  Edit the Makefile to disable SSE2 and enable NEON when
+  compiling for ARM64.
+  
+
+Release 1.10.1  (17/02/2023)
+---------------------------
+
+* Fixed dithering of clipped signals.
+
+
+Release 1.10.0  (16/02/2023)
+---------------------------
+
+* Fixed constructor parameter range tests.
+
+
 Release 1.8.0  (30/12/2020)
 ---------------------------
 
